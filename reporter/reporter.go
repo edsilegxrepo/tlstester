@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"criticalsys.net/tlstester"
+	"github.com/edsilegxrepo/tlstester"
 )
 
 // Dashboard renders formatted ANSI diagnostic tables to the provided io.Writer target.
@@ -98,8 +98,23 @@ func Dashboard(w io.Writer, cfg *tlstester.Config, results []tlstester.TargetRes
 			_, _ = fmt.Fprintf(w, "  Key Exchange Group   : %s\n", cyan(res.NegotiatedGroup))
 		}
 		_, _ = fmt.Fprintf(w, "  OCSP Stapled         : %t\n", res.OCSPStapled)
+		if res.SCTsPresent {
+			_, _ = fmt.Fprintf(w, "  CT SCTs Present      : %s (%d SCTs)\n", green("true"), res.SCTCount)
+		} else {
+			_, _ = fmt.Fprintf(w, "  CT SCTs Present      : %s\n", yellow("false"))
+		}
 		if res.ActiveOCSPStatus != "" {
 			_, _ = fmt.Fprintf(w, "  Active OCSP Status   : %s\n", res.ActiveOCSPStatus)
+		}
+		if res.OCSPRevocation != nil {
+			switch status := res.OCSPRevocation.Status; status {
+			case "Good":
+				_, _ = fmt.Fprintf(w, "  OCSP Revocation      : %s\n", green(status))
+			case "Revoked":
+				_, _ = fmt.Fprintf(w, "  OCSP Revocation      : %s (Reason: %s)\n", red(status), res.OCSPRevocation.RevokedReason)
+			default:
+				_, _ = fmt.Fprintf(w, "  OCSP Revocation      : %s\n", yellow(status))
+			}
 		}
 		if res.CertExpirationWarning != "" {
 			_, _ = fmt.Fprintf(w, "  Cert Expiration Warn : %s\n", yellow(res.CertExpirationWarning))
@@ -125,12 +140,31 @@ func Dashboard(w io.Writer, cfg *tlstester.Config, results []tlstester.TargetRes
 			for idx, cert := range res.CapturedChain {
 				_, _ = fmt.Fprintf(w, "    [%d] Subject : %s\n", idx+1, cert.Subject)
 				_, _ = fmt.Fprintf(w, "        Issuer  : %s\n", cert.Issuer)
-				_, _ = fmt.Fprintf(w, "        Expires : %s\n", cert.NotAfter.Format(time.RFC3339))
+				// Show expiry with color based on status (only for leaf cert)
+				if idx == 0 && res.LeafIsExpired {
+					_, _ = fmt.Fprintf(w, "        Expires : %s %s\n", red(cert.NotAfter.Format(time.RFC3339)), red("(EXPIRED)"))
+				} else {
+					_, _ = fmt.Fprintf(w, "        Expires : %s\n", cert.NotAfter.Format(time.RFC3339))
+				}
+				// Show days remaining for leaf cert
+				if idx == 0 {
+					if res.LeafDaysRemaining < 0 {
+						_, _ = fmt.Fprintf(w, "        Days    : %s\n", red(fmt.Sprintf("%d (expired)", res.LeafDaysRemaining)))
+					} else if res.LeafDaysRemaining <= 30 {
+						_, _ = fmt.Fprintf(w, "        Days    : %s\n", yellow(fmt.Sprintf("%d", res.LeafDaysRemaining)))
+					} else {
+						_, _ = fmt.Fprintf(w, "        Days    : %d\n", res.LeafDaysRemaining)
+					}
+				}
 				if len(cert.DNSNames) > 0 {
 					_, _ = fmt.Fprintf(w, "        SANs    : %s\n", strings.Join(cert.DNSNames, ", "))
 				}
 				_, _ = fmt.Fprintf(w, "        Serial  : %X\n", cert.SerialNumber)
 				_, _ = fmt.Fprintf(w, "        SigAlgo : %s\n", cert.SignatureAlgorithm)
+				// Show key type/size for leaf cert
+				if idx == 0 && res.LeafKeyType != "" {
+					_, _ = fmt.Fprintf(w, "        KeyType : %s (%d bits)\n", res.LeafKeyType, res.LeafKeySize)
+				}
 			}
 		}
 
@@ -169,14 +203,16 @@ func CSV(w io.Writer, results []tlstester.TargetResult) error {
 	wWriter := csv.NewWriter(w)
 	defer wWriter.Flush()
 
-	_ = wWriter.Write([]string{
+	if err := wWriter.Write([]string{
 		"Host", "Port", "DNS_Ms", "TCP_Ms", "TCP_Connected",
 		"TLS_Success", "TLS_Ms", "Protocol", "Cipher", "ALPN",
 		"OCSP_Stapled", "HTTP_Status", "Error",
-	})
+	}); err != nil {
+		return fmt.Errorf("failed to write CSV header: %w", err)
+	}
 
-	for _, res := range results {
-		_ = wWriter.Write([]string{
+	for i, res := range results {
+		if err := wWriter.Write([]string{
 			res.Target.Host,
 			strconv.Itoa(res.Target.Port),
 			strconv.FormatInt(res.DNSLatency.Milliseconds(), 10),
@@ -190,7 +226,14 @@ func CSV(w io.Writer, results []tlstester.TargetResult) error {
 			strconv.FormatBool(res.OCSPStapled),
 			res.HTTPStatusLine,
 			res.Error,
-		})
+		}); err != nil {
+			return fmt.Errorf("failed to write CSV row %d: %w", i+1, err)
+		}
+	}
+
+	wWriter.Flush()
+	if err := wWriter.Error(); err != nil {
+		return fmt.Errorf("CSV write error: %w", err)
 	}
 	return nil
 }

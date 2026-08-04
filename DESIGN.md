@@ -4,7 +4,7 @@
 
 The **TLS Connection Tester** (`tlstester`) is a production-grade, single-binary TLS diagnostics utility and importable library written in Go. It is designed to probe network targets, verify cryptographic safety, audit certificate chains, test session resumption, inspect negotiated ciphers, evaluate HTTP/ALPN endpoints, and route outbound diagnostic traffic through HTTP or SOCKS proxies.
 
-`tlstester` is engineered to be consumed **BOTH as a standalone CLI executable** (`cmd/tlstester`) and **integrated programmatically as importable Go library packages** (`criticalsys.net/tlstester`, `criticalsys.net/tlstester/probes`, `criticalsys.net/tlstester/certs`, `criticalsys.net/tlstester/reporter`). For system architecture details, refer to [ARCHITECTURE.md](ARCHITECTURE.md).
+`tlstester` is engineered to be consumed **BOTH as a standalone CLI executable** (`cmd/tlstester`) and **integrated programmatically as importable Go library packages** (`github.com/edsilegxrepo/tlstester`, `github.com/edsilegxrepo/tlstester/probes`, `github.com/edsilegxrepo/tlstester/certs`, `github.com/edsilegxrepo/tlstester/reporter`). For system architecture details, refer to [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### Key Functional Objectives
 * **Parallelized Target Probing**: Scale diagnostics across multiple targets concurrently using configurable Goroutine worker pools (`-workers`).
@@ -43,8 +43,8 @@ graph TD
 ### 2.1 Modular Component Layout
 - [cmd/tlstester/main.go](cmd/tlstester/main.go): Pure CLI entry point. Handles flag parsing, OS signal trapping (`signal.NotifyContext`), file log redirection, and process exit code resolution.
 - [probes/tcp.go](probes/tcp.go): Granular, context-aware TCP socket dialing, retries, DNS/TCP latency measurement, and HTTP/SOCKS5 proxy tunneling (`probes.TCP`, `probes.DialViaProxy`).
-- [probes/tls.go](probes/tls.go): Granular, context-aware TLS handshake execution, SNI controls, peer certificate extraction on failure, and PEM cert exporter (`probes.TLS`, `probes.ExportCertificates`).
-- [probes/ocsp.go](probes/ocsp.go): Active AIA OCSP responder prober (`probes.CheckActiveOCSP`).
+- [probes/tls.go](probes/tls.go): Granular, context-aware TLS handshake execution via `probes.TLSOptions`, SNI controls, peer certificate extraction on failure, Certificate Transparency SCT parsing (`probes.SCTInfo`), and PEM cert exporter with path traversal protection (`probes.TLS`, `probes.ExportCertificates`).
+- [probes/ocsp.go](probes/ocsp.go): Active OCSP revocation checking with proper POST requests (`probes.CheckOCSPRevocation`), AIA issuer certificate fetching (`probes.FetchIssuerFromAIA`), and legacy GET-based reachability check (`probes.CheckActiveOCSP`).
 - [probes/http.go](probes/http.go): HTTP GET probing over TLS, custom header injection, `Alt-Svc` extraction, and status assertions (`probes.HTTP`).
 - [probes/scan.go](probes/scan.go): Cipher suite scanner (`probes.ScanCipherSuites`), session resumption tester (`probes.TestSessionResumption`), and UDP/QUIC reachability check (`probes.CheckQUIC`).
 - [certs/certs.go](certs/certs.go): Isolated certificate management subpackage (`certs.LoadTruststore`, `certs.LoadClientKeypair`, `certs.DaysUntilExpiration`).

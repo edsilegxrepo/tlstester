@@ -11,12 +11,13 @@ The utility is engineered for high concurrency, zero external dependencies, and 
 The primary objective of `tlstester` is to provide a low-footprint, command-line-driven diagnostic tool and programmatic library to probe network targets and verify their cryptographic safety. It operates as a troubleshooting agent when debugging connection dropouts, trust validation failures, misconfigured Server Name Indication (SNI), certificate expiration, or service degradation.
 
 ### Key Functional Objectives
-* **Dual-Consumption Architecture**: Consume BOTH as a standalone CLI executable (`cmd/tlstester`) and programmatically via Go subpackages (`import "criticalsys.net/tlstester"` or `import "criticalsys.net/tlstester/probes"`).
+* **Dual-Consumption Architecture**: Consume BOTH as a standalone CLI executable (`cmd/tlstester`) and programmatically via Go subpackages (`import "github.com/edsilegxrepo/tlstester"` or `import "github.com/edsilegxrepo/tlstester/probes"`).
 * **Parallelized Target Probing**: Scale diagnostics across multiple targets concurrently using configurable Goroutine worker pools (`-workers`).
 * **Cartesian Probing Grid**: Support automated target grid expansion across combinations of hostnames and ports (`-hostname` and `-port`).
 * **Cryptographic Auditing**: Enforce deep security validation of TLS protocols and cipher suites (`-scan`), scanning for obsolete protocols (TLS 1.0, TLS 1.1) and cryptographically weak ciphers.
 * **Certificate Chain Validation**: Inspect certificate validity windows, CN/SAN matches, validation chains, serial numbers, and signature algorithms, capturing peer certificates even when handshakes fail.
-* **Active AIA OCSP & Expiration Warnings**: Perform active HTTP AIA OCSP queries (`-check-ocsp`) and enforce certificate expiration warning thresholds (`-warn-days`).
+* **Active AIA OCSP & Expiration Warnings**: Perform proper OCSP POST revocation checks with issuer verification (`-check-ocsp`), automatically fetching issuer certificates via AIA extension, and enforce certificate expiration warning thresholds (`-warn-days`).
+* **Certificate Transparency (CT) SCT Parsing**: Detect and parse Signed Certificate Timestamps (SCTs) from TLS extensions or embedded in certificates, reporting CT log IDs and timestamps.
 * **Dual-Layer Diagnostics**: Prove socket layer reachability (including SOCKS/HTTP proxy routing and UDP/QUIC reachability) as well as application-layer health via HTTP GET status assertions, ALPN verification, and `Alt-Svc` header extraction.
 * **Structured Pipeline Output**: Supply tabular ANSI reports for humans, CSV exports (`-csv`), log file redirection (`-log`), and comprehensive JSON outputs (`-json`) for integration into automated CI/CD and deployment pipelines.
 
@@ -42,14 +43,19 @@ The primary objective of `tlstester` is to provide a low-footprint, command-line
 - **Least-Privilege Network Access**: Uses standard user-space TCP socket dialing (`net.DialContext`) and UDP datagram sockets (`net.ListenUDP`), avoiding raw socket root privilege requirements.
 
 ### 2.5 Non-Vulnerable Standard Library Footprint
-- **Zero Third-Party Dependencies**: Built **100% on Go's standard library** (`crypto/tls`, `crypto/x509`, `net/http`, `net`), ensuring a minimal attack surface immune to supply-chain dependency vulnerabilities.
+- **Zero Third-Party Dependencies**: Built **100% on Go's standard library** (`crypto/tls`, `crypto/x509`, `net/http`, `net`, `golang.org/x/crypto/ocsp`), ensuring a minimal attack surface immune to supply-chain dependency vulnerabilities.
+
+### 2.6 Input Validation & Path Traversal Prevention
+- **Path Sanitization**: All file path inputs (truststores, keystores, certificate export prefixes) are sanitized using `filepath.Abs` and validated against directory traversal attacks (`../`).
+- **HTTP Response Size Limits**: OCSP and AIA HTTP responses are bounded via `io.LimitReader` to prevent denial-of-service from oversized responses (10MB issuer certs, 1MB OCSP responses).
+- **Hostname Sanitization**: Certificate export filenames sanitize hostnames to prevent directory creation via path separator injection.
 
 ---
 
 ## 3. Code Quality Assessment and Best Practices
 
 ### 3.1 Modular Decoupled Architecture
-- **Single-Responsibility Subpackages**: Code is cleanly partitioned into `criticalsys.net/tlstester` (orchestration), `criticalsys.net/tlstester/probes` (low-level network calls), `criticalsys.net/tlstester/certs` (truststore management), and `criticalsys.net/tlstester/reporter` (output formatters).
+- **Single-Responsibility Subpackages**: Code is cleanly partitioned into `github.com/edsilegxrepo/tlstester` (orchestration), `github.com/edsilegxrepo/tlstester/probes` (low-level network calls), `github.com/edsilegxrepo/tlstester/certs` (truststore management), and `github.com/edsilegxrepo/tlstester/reporter` (output formatters).
 
 ### 3.2 Concurrency & Resource Management
 - **Thread Safety**: Goroutine channels and sync primitives prevent race conditions during parallel target scans.
@@ -62,7 +68,10 @@ The primary objective of `tlstester` is to provide a low-footprint, command-line
 | **0** | `ExitSuccess` | Success (All target checks passed). |
 | **1** | `ExitTargetFailure` | Target Probe / Status Failure (TCP connect, TLS handshake, or status assertion failure). |
 | **2** | `ExitUsageError` | Invalid CLI Usage / Target Parsing Error. |
-| **3** | `ExitIOError` | File I/O Error (Log file or CSV report creation failure). |
+| **3** | `ExitIOError` | File I/O Error (Log file, CSV report, or certificate export failure). |
+| **4** | `ExitConfigError` | Invalid Configuration (TLS version, cipher suite, or truststore parsing failure). |
+| **5** | `ExitPartialSuccess` | Partial Success (Some targets passed, some failed). |
+| **130** | `ExitCancelled` | Interrupted by SIGINT (Standard Unix convention: 128 + signal number). |
 
 ### 3.4 Test Suite & Quality Assurance
 - **80%+ Coverage Requirement**: Enforces an 80%+ statement coverage requirement across all packages (`83.8%` project average), combining sub-second in-memory mock unit tests with mandatory live integration tests against public CDNs. For full details, refer to [TESTING.md](TESTING.md).

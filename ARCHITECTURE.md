@@ -82,7 +82,7 @@ graph TD
 ### 2.1 Module & Package Hierarchy Tree
 
 ```text
-criticalsys.net/tlstester (Go Module Root)
+github.com/edsilegxrepo/tlstester (Go Module Root)
 │
 ├── config.go             # Root API: Config struct, NewConfig(), StringSliceFlag
 ├── target.go             # Root API: Target, TargetResult, ParseTargets(), ParseURLTarget()
@@ -91,10 +91,10 @@ criticalsys.net/tlstester (Go Module Root)
 │
 ├── probes/               # Subpackage: Low-Level Granular Probes (package probes)
 │   ├── tcp.go            # probes.TCP(), probes.DialViaProxy()
-│   ├── tls.go            # probes.TLS(), probes.ExportCertificates()
+│   ├── tls.go            # probes.TLS(), probes.TLSOptions, probes.TLSResult, probes.SCTInfo, probes.ExportCertificates()
 │   ├── http.go           # probes.HTTP()
 │   ├── scan.go           # probes.ScanCipherSuites(), probes.TestSessionResumption(), probes.CheckQUIC()
-│   └── ocsp.go           # probes.CheckActiveOCSP()
+│   └── ocsp.go           # probes.CheckOCSPRevocation(), probes.FetchIssuerFromAIA(), probes.CheckActiveOCSP()
 │
 ├── certs/                # Subpackage: Cryptographic Certificates & mTLS (package certs)
 │   └── certs.go          # certs.LoadTruststore(), certs.LoadClientKeypair(), certs.DaysUntilExpiration()
@@ -110,7 +110,7 @@ criticalsys.net/tlstester (Go Module Root)
 
 To consume `tlstester` programmatically, add the module import to your Go project:
 ```bash
-go get criticalsys.net/tlstester
+go get github.com/edsilegxrepo/tlstester
 ```
 
 #### Pattern A: High-Level Batch Diagnostic Orchestration (`package tlstester`)
@@ -125,8 +125,8 @@ import (
 	"os"
 	"time"
 
-	"criticalsys.net/tlstester"
-	"criticalsys.net/tlstester/reporter"
+	"github.com/edsilegxrepo/tlstester"
+	"github.com/edsilegxrepo/tlstester/reporter"
 )
 
 func main() {
@@ -165,8 +165,8 @@ import (
 	"fmt"
 	"time"
 
-	"criticalsys.net/tlstester"
-	"criticalsys.net/tlstester/probes"
+	"github.com/edsilegxrepo/tlstester"
+	"github.com/edsilegxrepo/tlstester/probes"
 )
 
 func main() {
@@ -182,16 +182,23 @@ func main() {
 
 	fmt.Printf("Resolved IPs: %v | DNS: %v | TCP: %v\n", ips, dnsLatency, tcpLatency)
 
-	// 2. Granular TLS Handshake Probe
+	// 2. Granular TLS Handshake Probe (using TLSOptions struct)
 	tlsConfig, _ := tlstester.CreateTLSConfig(tlstester.NewConfig(), tlstester.Target{Host: "google.com", Port: 443})
-	tlsConn, tlsRes, err := probes.TLS(ctx, tlsConfig, "google.com", 443, conn, 5*time.Second, 2, "", "")
+	tlsConn, tlsRes, err := probes.TLS(ctx, probes.TLSOptions{
+		Config:  tlsConfig,
+		Host:    "google.com",
+		Port:    443,
+		RawConn: conn,
+		Timeout: 5 * time.Second,
+		Retries: 2,
+	})
 	if err != nil {
 		panic(err)
 	}
 	defer tlsConn.Close()
 
-	fmt.Printf("TLS Protocol: %s | Cipher: %s | Handshake Latency: %v\n",
-		tlsRes.Protocol, tlsRes.Cipher, tlsRes.HandshakeLatency)
+	fmt.Printf("TLS Protocol: %s | Cipher: %s | Handshake Latency: %v | SCTs: %d\n",
+		tlsRes.Protocol, tlsRes.Cipher, tlsRes.HandshakeLatency, tlsRes.SCTCount)
 }
 ```
 
@@ -203,7 +210,7 @@ package main
 
 import (
 	"fmt"
-	"criticalsys.net/tlstester/certs"
+	"github.com/edsilegxrepo/tlstester/certs"
 )
 
 func main() {
@@ -271,6 +278,7 @@ sequenceDiagram
 | :--- | :--- |
 | `crypto/tls` | TLS 1.0–1.3 handshakes, cipher suite definitions, ALPN, session ticket cache. |
 | `crypto/x509` | X.509 certificate parsing, truststore pool management, PEM encoding. |
+| `golang.org/x/crypto/ocsp` | OCSP request/response creation and parsing per RFC 6960. |
 | `net` | Raw TCP socket dialing, DNS host lookups, UDP/QUIC reachability probes. |
 | `net/http` | Application-layer HTTP GET probing, custom header injection, `Alt-Svc` parsing. |
 | `net/http/httptest` | In-memory TLS/HTTP test servers for sub-second mock unit tests. |

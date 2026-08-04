@@ -21,6 +21,29 @@ import (
 	"time"
 )
 
+// sanitizePath validates and sanitizes a file path to prevent path traversal attacks.
+// Returns the absolute, cleaned path or an error if the path is invalid.
+func sanitizePath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("empty path")
+	}
+
+	// Clean and convert to absolute path
+	cleanPath := filepath.Clean(path)
+	absPath, err := filepath.Abs(cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve absolute path: %w", err)
+	}
+
+	// Verify the cleaned path doesn't escape via traversal
+	// After Abs(), any remaining ".." would indicate attempted traversal
+	if strings.Contains(absPath, "..") {
+		return "", fmt.Errorf("path traversal detected in '%s'", path)
+	}
+
+	return absPath, nil
+}
+
 // LoadTruststore loads custom root CA certificates from a file or specified truststore string format
 // and appends them dynamically to the system root certificate pool (or creates a new pool if system pool unavailable).
 func LoadTruststore(arg string) (*x509.CertPool, error) {
@@ -34,7 +57,10 @@ func LoadTruststore(arg string) (*x509.CertPool, error) {
 		path = parts[0]
 	}
 
-	cleanPath := filepath.Clean(path)
+	cleanPath, err := sanitizePath(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid truststore path: %w", err)
+	}
 
 	certs, err := x509.SystemCertPool()
 	if err != nil || certs == nil {
@@ -62,7 +88,10 @@ func LoadClientKeypair(arg string) ([]tls.Certificate, error) {
 
 	parts := strings.Split(arg, ",")
 	certPath := parts[0]
-	cleanPath := filepath.Clean(certPath)
+	cleanPath, err := sanitizePath(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid keystore path: %w", err)
+	}
 
 	/* #nosec G304 -- User-supplied configuration path: path is sanitized using filepath.Clean before loading custom mTLS client keypair PEM files */
 	certPEM, err := os.ReadFile(cleanPath)

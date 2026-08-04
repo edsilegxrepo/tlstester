@@ -10,10 +10,13 @@
 //     log file creation, diagnostic execution, output formatting, and granular exit code resolution.
 //
 // GRANULAR EXIT CODES:
-//   - Exit 0: Success (All target checks passed).
-//   - Exit 1: General Target Probe / Status Failure (TCP connect, TLS handshake, or status assertion failure).
-//   - Exit 2: Invalid CLI Usage / Target Parsing Error.
-//   - Exit 3: I/O File Creation / Log File Error.
+//   - Exit 0 (ExitSuccess): All target checks passed.
+//   - Exit 1 (ExitTargetFailure): One or more targets failed (TCP, TLS, or HTTP assertion).
+//   - Exit 2 (ExitUsageError): Invalid CLI usage or target parsing error.
+//   - Exit 3 (ExitIOError): File I/O error (log file, CSV, certificate export).
+//   - Exit 4 (ExitConfigError): Invalid configuration (TLS version, cipher suite, truststore).
+//   - Exit 5 (ExitPartialSuccess): Some targets passed, some failed.
+//   - Exit 130 (ExitCancelled): Interrupted by SIGINT (standard Unix convention: 128 + signal number).
 package main
 
 import (
@@ -26,18 +29,21 @@ import (
 	"syscall"
 	"time"
 
-	"criticalsys.net/tlstester"
-	"criticalsys.net/tlstester/reporter"
+	"github.com/edsilegxrepo/tlstester"
+	"github.com/edsilegxrepo/tlstester/reporter"
 )
 
 var version = "1.0.0"
 
 // Exit codes for diagnostic automation and pipeline scripting
 const (
-	ExitSuccess       = 0
-	ExitTargetFailure = 1
-	ExitUsageError    = 2
-	ExitIOError       = 3
+	ExitSuccess        = 0  // All targets passed
+	ExitTargetFailure  = 1  // One or more targets failed (TCP, TLS, or assertion)
+	ExitUsageError     = 2  // Invalid CLI usage or target parsing error
+	ExitIOError        = 3  // File I/O error (log file, CSV, certificate export)
+	ExitConfigError    = 4  // Invalid configuration (TLS version, cipher suite, truststore)
+	ExitPartialSuccess = 5  // Some targets passed, some failed
+	ExitCancelled      = 130 // Interrupted by SIGINT (standard Unix convention: 128 + signal number)
 )
 
 func main() {
@@ -132,10 +138,20 @@ func main() {
 	// Run Diagnostics
 	results := tlstester.RunDiagnostics(ctx, cfg, targets)
 
+	// Check for context cancellation (SIGINT/SIGTERM)
+	if ctx.Err() != nil {
+		fmt.Fprintf(os.Stderr, "\nOperation cancelled: %v\n", ctx.Err())
+		os.Exit(ExitCancelled)
+	}
+
+	// Track output errors for exit code
+	var outputErr error
+
 	// Format Output
 	if cfg.JSON {
 		if err := reporter.JSON(outputWriter, results); err != nil {
 			fmt.Fprintf(os.Stderr, "Error rendering JSON: %v\n", err)
+			outputErr = err
 		}
 	} else {
 		reporter.Dashboard(outputWriter, cfg, results)
@@ -150,6 +166,7 @@ func main() {
 		} else {
 			if csvErr := reporter.CSV(csvFile, results); csvErr != nil {
 				fmt.Fprintf(os.Stderr, "Error writing CSV report: %v\n", csvErr)
+				outputErr = csvErr
 			}
 			if closeErr := csvFile.Close(); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "Error closing CSV file '%s': %v\n", cfg.CSV, closeErr)
@@ -158,16 +175,27 @@ func main() {
 	}
 
 	// Granular Exit Code Resolution
-	hasFailures := false
+	successCount := 0
+	failureCount := 0
 	for _, r := range results {
 		if !r.TCPConnected || !r.TLSHandshakeSuccess || r.Error != "" {
-			hasFailures = true
-			break
+			failureCount++
+		} else {
+			successCount++
 		}
 	}
 
-	if hasFailures {
-		os.Exit(ExitTargetFailure)
+	// If output failed, report I/O error
+	if outputErr != nil {
+		os.Exit(ExitIOError)
 	}
-	os.Exit(ExitSuccess)
+
+	// Determine exit code based on results
+	if failureCount == 0 {
+		os.Exit(ExitSuccess)
+	} else if successCount == 0 {
+		os.Exit(ExitTargetFailure)
+	} else {
+		os.Exit(ExitPartialSuccess)
+	}
 }

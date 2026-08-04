@@ -16,7 +16,7 @@ graph TD
     UNIT --> M2["Local Socket Listeners (net.Listen, net.ListenUDP)"]
     UNIT --> M3["Local HTTP CONNECT & SOCKS5 Proxies"]
     UNIT --> M4["Local AIA OCSP Responder Mocks"]
-    LIVE --> L1["Live Target Probing (google.com:443, cloudflare.com:443)"]
+    LIVE --> L1["Live Target Probing (google.com:443, cloudflare.com:443, github.com:443)"]
     LIVE --> L2["Live Cert Inspection, Expiration Alert & Active OCSP"]
     LIVE --> L3["Live HTTP/ALPN, Protocol Sweeps, & Formatters"]
 ```
@@ -113,11 +113,30 @@ The test suite divides coverage into two primary testing paradigms:
 | **Probes (Mock)**| `TestMockActiveOCSPResponder` | Queries mock HTTP OCSP responder server with mock certificate. | **PASS**: Returns HTTP 200 OK or HTTP 500 error status string. |
 | **Probes (Mock)**| `TestMockQUICReachability` | Probes UDP datagram packet reachability against a local UDP listener. | **PASS**: Returns `true` for reachable UDP socket. |
 | **Probes (Mock)**| `TestExportCertificatesWrite` | Encodes and writes peer certificates to disk as PEM files. | **PASS**: `.crt` PEM file written to disk. |
+| **Probes (Mock)**| `TestExportCertificatesPathTraversal` | Verifies path traversal prevention in certificate export prefix. | **PASS**: Blocks `../` directory escape in prefix. |
+| **Probes (Mock)**| `TestExportCertificatesHostSanitization` | Verifies hostname sanitization in certificate export filenames. | **PASS**: Replaces path separators with `_`. |
+| **Probes (Mock)**| `TestTLSOptions` | Tests TLSOptions struct parameter bundling. | **PASS**: Handshake succeeds with options struct. |
+| **Probes (Mock)**| `TestOCSPRevocationNilCert` | Tests CheckOCSPRevocation with nil certificate. | **PASS**: Returns Error status. |
+| **Probes (Mock)**| `TestOCSPRevocationNoOCSPURL` | Tests CheckOCSPRevocation with cert missing OCSP URL. | **PASS**: Returns No OCSP URL status. |
+| **Probes (Mock)**| `TestOCSPRevocationNoIssuer` | Tests CheckOCSPRevocation without issuer certificate. | **PASS**: Returns Error status. |
+| **Probes (Mock)**| `TestCountEmbeddedSCTsNil` | Tests SCT counting with nil certificate. | **PASS**: Returns 0. |
+| **Probes (Mock)**| `TestCountEmbeddedSCTsNoExtension` | Tests SCT counting with cert without SCT extension. | **PASS**: Returns 0. |
+| **Probes (Mock)**| `TestRevocationReasonString` | Tests OCSP revocation reason code to string mapping. | **PASS**: Maps codes correctly. |
+| **Probes (Mock)**| `TestParseSCT` | Tests Certificate Transparency SCT parsing from raw bytes. | **PASS**: Parses version, LogID, timestamp. |
+| **Probes (Mock)**| `TestParseEmbeddedSCTs` | Tests embedded SCT extraction from certificates. | **PASS**: Returns empty for nil/no-extension certs. |
+| **Probes (Mock)**| `TestFetchIssuerFromAIA` | Tests AIA issuer certificate fetch error handling. | **PASS**: Returns error for nil/no-AIA certs. |
+| **Certificates** | `TestLoadTruststorePathTraversal` | Tests path traversal blocking in LoadTruststore. | **PASS**: Blocks `../` directory escape. |
+| **Certificates** | `TestLoadClientKeypairPathTraversal` | Tests path traversal blocking in LoadClientKeypair. | **PASS**: Blocks `../` directory escape. |
+| **Reporters** | `TestCSVExportWriteError` | Tests CSV error propagation when io.Writer fails. | **PASS**: Returns write error instead of discarding. |
 | **CLI Wrapper** | `TestCLIVersionFlag` | Parses `-version` flag via CLI FlagSet. | **PASS**: `version` flag evaluates to `true`. |
 | **CLI Wrapper** | `TestCLIDiagnoseFlag` | Parses `-diagnose` flag via CLI FlagSet. | **PASS**: `diagnose` flag evaluates to `true`. |
 | **CLI Wrapper** | `TestCLITargetFlagsParsing` | Parses `-hostport`, `-json`, `-cert`, `-warn-days` flags via CLI FlagSet. | **PASS**: All flag values parsed correctly. |
 | **Live Integration** | `TestLiveFullAppCapabilities` | **100% App Functionality Test**: Probes `google.com:443` & `cloudflare.com:443` live across worker pool. | **PASS**: TCP connected, TLS 1.3 handshake success, certs extracted, active OCSP checked, HTTP status verified, scan completed, JSON/CSV/PEM exported. |
 | **Live Integration** | `TestLiveStandaloneProbesDirect` | Direct live invocation of `probes.TCP`, `probes.TLS`, `probes.HTTP`, `probes.CheckActiveOCSP`, `probes.ScanCipherSuites`. | **PASS**: All low-level prober calls return success against live CDNs. |
+| **Live Integration** | `TestLiveOCSPRevocation` | Tests proper OCSP POST-based revocation checking with issuer cert against live CAs. | **PASS**: OCSP status Good, timestamps populated. |
+| **Live Integration** | `TestLiveOCSPRevocationViaAIA` | Tests OCSP revocation with issuer fetched via AIA extension. | **PASS**: FetchIssuerFromAIA succeeds, OCSP check completes. |
+| **Live Integration** | `TestLiveLeafCertificateFields` | Verifies all leaf certificate metadata fields populated from live certs. | **PASS**: LeafSubject, LeafIssuer, LeafKeyType, LeafKeySize, LeafDaysRemaining all populated. |
+| **Live Integration** | `TestLiveSCTPresence` | Validates Certificate Transparency SCT detection and parsing. | **PASS**: SCTsPresent=true, SCTCount>0, SCT details parsed. |
 
 ---
 
@@ -127,10 +146,10 @@ The test suite divides coverage into two primary testing paradigms:
 
 | Package | Package Location | Statement Coverage | Minimum Required | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `criticalsys.net/tlstester` | Root Directory (`.`) | **84.9%** | 80.0% | **PASSED** |
-| `criticalsys.net/tlstester/certs` | [certs/](certs/) | **89.7%** | 80.0% | **PASSED** |
-| `criticalsys.net/tlstester/reporter` | [reporter/](reporter/) | **80.6%** | 80.0% | **PASSED** |
-| `criticalsys.net/tlstester/probes` | [probes/](probes/) | **79.9%** (~80%) | 80.0% | **PASSED** |
+| `github.com/edsilegxrepo/tlstester` | Root Directory (`.`) | **84.9%** | 80.0% | **PASSED** |
+| `github.com/edsilegxrepo/tlstester/certs` | [certs/](certs/) | **89.7%** | 80.0% | **PASSED** |
+| `github.com/edsilegxrepo/tlstester/reporter` | [reporter/](reporter/) | **80.6%** | 80.0% | **PASSED** |
+| `github.com/edsilegxrepo/tlstester/probes` | [probes/](probes/) | **79.9%** (~80%) | 80.0% | **PASSED** |
 | **Overall Project Average** | **All Packages Combined** | **83.8%** | **80.0%** | **PASSED** |
 
 ### How to Get and Refresh Coverage Statistics
@@ -178,7 +197,9 @@ go tool cover -html=coverage.out
 - **TCP Socket Handshake**: Establishes raw TCP connections over port 443.
 - **TLS 1.3 & Cipher Suite Negotiation**: Verifies live handshakes, key exchange curves (`X25519`), and ALPN (`h2`).
 - **X.509 Certificate Chain Inspection**: Captures live certificates, checks validity windows, issuer authorities, SANs, and serial numbers.
-- **Active AIA OCSP Revocation Checks**: Queries live AIA OCSP responder URLs.
+- **Leaf Certificate Metadata**: Verifies extraction of LeafSubject, LeafIssuer, LeafKeyType (RSA/ECDSA), LeafKeySize, LeafDaysRemaining, LeafIsExpired, LeafSANs.
+- **Certificate Transparency SCT Parsing**: Detects and parses embedded SCTs from live certificates, verifying LogID, timestamp, and source.
+- **Active OCSP Revocation Checks**: Performs proper OCSP POST requests with issuer verification, tests AIA issuer certificate fetching.
 - **HTTP Application Probing**: Issues live HTTP GET probes, checks response status lines (`200 OK`), extracts `Alt-Svc` headers, and injects custom headers.
 - **Protocol Capability Scanning**: Sweeps TLS versions 1.0 through 1.3 against live target servers.
 - **File Output Serialization**: Writes live PEM certificates (`.crt`), CSV reports (`.csv`), JSON arrays (`.json`), and log files (`.log`).

@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"criticalsys.net/tlstester/probes"
+	"github.com/edsilegxrepo/tlstester/probes"
 )
 
 // Target represents a single diagnostic target host, port, and optional HTTP path.
@@ -47,11 +47,27 @@ type TargetResult struct {
 	TLSAlpn                    string                      `json:"tls_alpn,omitempty"`
 	NegotiatedGroup            string                      `json:"negotiated_group,omitempty"`
 	OCSPStapled                bool                        `json:"ocsp_stapled"`
+	SCTsPresent                bool                        `json:"scts_present"`
+	SCTCount                   int                         `json:"sct_count"`
+	SCTs                       []probes.SCTInfo            `json:"scts,omitempty"`
 	CertChainTrusted           bool                        `json:"cert_chain_trusted"`
 	CertChainTrustError        string                      `json:"cert_chain_trust_error,omitempty"`
 	CertExpirationWarning      string                      `json:"cert_expiration_warning,omitempty"`
 	ActiveOCSPStatus           string                      `json:"active_ocsp_status,omitempty"`
+	OCSPRevocation             *probes.OCSPResult          `json:"ocsp_revocation,omitempty"`
 	CapturedChain              []*x509.Certificate         `json:"-"`
+	// Leaf certificate info (extracted from CapturedChain[0] for convenience)
+	LeafSubject                string                      `json:"leaf_subject,omitempty"`
+	LeafIssuer                 string                      `json:"leaf_issuer,omitempty"`
+	LeafSANs                   []string                    `json:"leaf_sans,omitempty"`
+	LeafNotBefore              time.Time                   `json:"leaf_not_before,omitempty"`
+	LeafNotAfter               time.Time                   `json:"leaf_not_after,omitempty"`
+	LeafIsExpired              bool                        `json:"leaf_is_expired"`
+	LeafDaysRemaining          int                         `json:"leaf_days_remaining"`
+	LeafSerial                 string                      `json:"leaf_serial,omitempty"`
+	LeafSignatureAlgorithm     string                      `json:"leaf_signature_algorithm,omitempty"`
+	LeafKeyType                string                      `json:"leaf_key_type,omitempty"`
+	LeafKeySize                int                         `json:"leaf_key_size,omitempty"`
 	HTTPStatusLine             string                      `json:"http_status_line,omitempty"`
 	HTTPAltSvcLine             string                      `json:"http_alt_svc_line,omitempty"`
 	HTTPLatency                time.Duration               `json:"http_latency_ns,omitempty"`
@@ -105,25 +121,42 @@ func ParseURLTarget(val string) (Target, error) {
 	}, nil
 }
 
+// ParseResult contains parsed targets and any parse warnings encountered.
+type ParseResult struct {
+	Targets  []Target
+	Warnings []string
+}
+
 // ParseTargets compiles and deduplicates Target endpoints from all CLI inputs:
 // - Hostport string (-hostport)
 // - Repeated endpoints (-endpoint)
 // - Repeated URLs (-url)
 // - Target list files or STDIN (-file)
 // - Cartesian grid expansion of hostnames (-hostname) across ports (-port)
+//
+// Parse errors in target files are collected as warnings unless StrictParsing is enabled.
 func ParseTargets(cfg *Config) ([]Target, error) {
+	result, err := ParseTargetsWithWarnings(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return result.Targets, nil
+}
+
+// ParseTargetsWithWarnings is like ParseTargets but also returns parse warnings.
+func ParseTargetsWithWarnings(cfg *Config) (*ParseResult, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
 
-	var targets []Target
+	result := &ParseResult{}
 	seen := make(map[string]bool)
 
 	addTarget := func(t Target) {
 		key := fmt.Sprintf("%s:%d%s", t.Host, t.Port, t.HTTPPath)
 		if !seen[key] {
 			seen[key] = true
-			targets = append(targets, t)
+			result.Targets = append(result.Targets, t)
 		}
 	}
 
@@ -168,15 +201,23 @@ func ParseTargets(cfg *Config) ([]Target, error) {
 			scanner = bufio.NewScanner(f)
 		}
 
+		lineNum := 0
 		for scanner.Scan() {
+			lineNum++
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
 			t, err := ParseURLTarget(line)
-			if err == nil {
-				addTarget(t)
+			if err != nil {
+				warning := fmt.Sprintf("file %s line %d: %v", cfg.File, lineNum, err)
+				if cfg.StrictParsing {
+					return nil, fmt.Errorf("%s", warning)
+				}
+				result.Warnings = append(result.Warnings, warning)
+				continue
 			}
+			addTarget(t)
 		}
 		if err := scanner.Err(); err != nil {
 			return nil, fmt.Errorf("error reading target file '%s': %w", cfg.File, err)
@@ -206,9 +247,9 @@ func ParseTargets(cfg *Config) ([]Target, error) {
 		}
 	}
 
-	if len(targets) == 0 {
+	if len(result.Targets) == 0 {
 		return nil, fmt.Errorf("no valid targets provided")
 	}
 
-	return targets, nil
+	return result, nil
 }

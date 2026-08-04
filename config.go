@@ -54,6 +54,7 @@ type Config struct {
 	Version            bool          `json:"version"`
 	WarnDays           int           `json:"warn_days"`
 	CheckOCSP          bool          `json:"check_ocsp"`
+	StrictParsing      bool          `json:"strict_parsing"`
 }
 
 // NewConfig initializes a Config struct with safe production default parameters

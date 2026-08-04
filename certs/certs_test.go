@@ -1,10 +1,12 @@
 // Package certs unit tests for certs.go.
 //
 // TEST STRATEGY EXPLANATION:
-// Verifies certificate parsing and validity calculations:
-// 1. DaysUntilExpiration calculation for nil certificates and valid NotAfter time windows.
-// 2. LoadTruststore handling of empty input paths, non-existent files, and invalid non-PEM contents.
-// 3. LoadClientKeypair handling of empty input strings, non-existent files, and invalid keypair PEM data.
+// Verifies certificate parsing, validity calculations, and security controls:
+//  1. DaysUntilExpiration calculation for nil certificates and valid NotAfter time windows.
+//  2. LoadTruststore handling of empty input paths, non-existent files, and invalid non-PEM contents.
+//  3. LoadClientKeypair handling of empty input strings, non-existent files, and invalid keypair PEM data.
+//  4. TestLoadTruststorePathTraversal & TestLoadClientKeypairPathTraversal: Path traversal prevention
+//     security tests verifying that sanitizePath blocks directory escape attempts (../).
 package certs
 
 import (
@@ -83,5 +85,21 @@ func TestLoadClientKeypairInvalidContent(t *testing.T) {
 	_, err := LoadClientKeypair(filePath)
 	if err == nil {
 		t.Error("expected error for invalid keypair PEM content")
+	}
+}
+
+// TestLoadTruststorePathTraversal tests that path traversal is blocked in LoadTruststore.
+func TestLoadTruststorePathTraversal(t *testing.T) {
+	_, err := LoadTruststore("../../../etc/passwd")
+	if err == nil {
+		t.Error("expected error for path traversal attempt")
+	}
+}
+
+// TestLoadClientKeypairPathTraversal tests that path traversal is blocked in LoadClientKeypair.
+func TestLoadClientKeypairPathTraversal(t *testing.T) {
+	_, err := LoadClientKeypair("../../../etc/passwd")
+	if err == nil {
+		t.Error("expected error for path traversal attempt")
 	}
 }

@@ -22,6 +22,13 @@ import (
 	"time"
 )
 
+// Network timing constants for retry behavior
+const (
+	// retryDelay is the context-aware sleep duration between TCP connection retry attempts.
+	// Uses time.After with select to allow cancellation during the delay period.
+	retryDelay = 500 * time.Millisecond
+)
+
 // closeConnWithError attempts to close a net.Conn and appends any close error to origErr.
 func closeConnWithError(conn net.Conn, origErr error) error {
 	if conn == nil {
@@ -70,7 +77,12 @@ func TCP(ctx context.Context, host string, port int, timeout time.Duration, retr
 			break
 		}
 		if i < retries {
-			time.Sleep(500 * time.Millisecond)
+			// Context-aware sleep to allow cancellation during retry delay
+			select {
+			case <-ctx.Done():
+				return nil, ips, dnsLatency, tcpLatency, ctx.Err()
+			case <-time.After(retryDelay):
+			}
 		}
 	}
 

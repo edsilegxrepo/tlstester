@@ -3,12 +3,21 @@
 // TEST STRATEGY EXPLANATION:
 // Employs sub-second in-memory mock servers (httptest.NewTLSServer, httptest.NewServer, net.Listen, net.ListenUDP)
 // to verify probe execution without network latency:
-// 1. TestMockTCPProbing & TestMockTCPContextCancelled: Local TCP socket dialing and context deadline cancellation.
-// 2. TestMockTLSAndHTTPProbing & TestTLSFallbackPeerCertificates: Handshake verification, Alt-Svc header extraction, cipher scanning, session ticket resumption, and fallback cert capture on trust validation failure.
-// 3. TestMockHTTPProxyTunneling & TestMockHTTPProxyRejection: In-memory HTTP CONNECT proxy 200 OK and 403 Forbidden scenarios.
-// 4. TestMockSOCKS5ProxyTunneling & TestMockSOCKS5ProxyErrors: In-memory SOCKS5 greeting, authentication rejection, and domain target connection.
-// 5. TestMockActiveOCSPResponder: Local HTTP mock server AIA OCSP responder 200 OK and 500 error queries.
-// 6. TestMockQUICReachability & TestExportCertificatesWrite: Local UDP datagram socket reachability and PEM certificate file export.
+//  1. TestMockTCPProbing & TestMockTCPContextCancelled: Local TCP socket dialing and context deadline cancellation.
+//  2. TestMockTLSAndHTTPProbing & TestTLSFallbackPeerCertificates: Handshake verification, Alt-Svc header extraction,
+//     cipher scanning, session ticket resumption, and fallback cert capture on trust validation failure.
+//  3. TestMockHTTPProxyTunneling & TestMockHTTPProxyRejection: In-memory HTTP CONNECT proxy 200 OK and 403 Forbidden.
+//  4. TestMockSOCKS5ProxyTunneling & TestMockSOCKS5ProxyErrors: In-memory SOCKS5 greeting, auth rejection, domain connect.
+//  5. TestMockActiveOCSPResponder: Local HTTP mock server AIA OCSP responder 200 OK and 500 error queries.
+//  6. TestMockQUICReachability: Local UDP datagram socket reachability tests.
+//  7. TestExportCertificatesWrite & TestExportCertificatesPathTraversal & TestExportCertificatesHostSanitization:
+//     PEM certificate file export with path traversal prevention and hostname sanitization security tests.
+//  8. TestTLSOptions: Options-based TLS function parameter bundling.
+//  9. TestOCSPRevocationNilCert & TestOCSPRevocationNoOCSPURL & TestOCSPRevocationNoIssuer: OCSP error handling.
+// 10. TestCountEmbeddedSCTsNil & TestCountEmbeddedSCTsNoExtension: SCT counting edge cases.
+// 11. TestRevocationReasonString: OCSP revocation reason code to string mapping.
+// 12. TestParseSCT & TestParseEmbeddedSCTs: Certificate Transparency SCT parsing from raw bytes.
+// 13. TestFetchIssuerFromAIA: AIA issuer certificate fetch error handling.
 package probes
 
 import (
@@ -101,7 +110,14 @@ func TestMockTLSAndHTTPProbing(t *testing.T) {
 	tlsConfig := ts.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
 	tlsConfig.ServerName = host
 
-	tlsConn, tlsRes, err := TLS(ctx, tlsConfig, host, port, rawConn, 1*time.Second, 0, "", "")
+	tlsConn, tlsRes, err := TLS(ctx, TLSOptions{
+		Config:  tlsConfig,
+		Host:    host,
+		Port:    port,
+		RawConn: rawConn,
+		Timeout: 1 * time.Second,
+		Retries: 0,
+	})
 	if err != nil {
 		t.Fatalf("TLS failed: %v", err)
 	}
@@ -158,7 +174,14 @@ func TestTLSFallbackPeerCertificates(t *testing.T) {
 
 	// Deliberately strict TLS config without Root CAs to trigger trust validation failure
 	strictConfig := &tls.Config{InsecureSkipVerify: false, ServerName: host}
-	_, tlsRes, err := TLS(ctx, strictConfig, host, port, rawConn, 1*time.Second, 0, "", "")
+	_, tlsRes, err := TLS(ctx, TLSOptions{
+		Config:  strictConfig,
+		Host:    host,
+		Port:    port,
+		RawConn: rawConn,
+		Timeout: 1 * time.Second,
+		Retries: 0,
+	})
 
 	if err == nil {
 		t.Error("expected TLS trust validation error for untrusted self-signed cert")
@@ -390,5 +413,262 @@ func TestExportCertificatesWrite(t *testing.T) {
 	expectedFile := filepath.Join(tmpDir, "export_example.com_443_0.crt")
 	if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
 		t.Errorf("expected certificate file '%s' was not created", expectedFile)
+	}
+}
+
+// TestExportCertificatesPathTraversal tests that ExportCertificates blocks path traversal attacks.
+func TestExportCertificatesPathTraversal(t *testing.T) {
+	cert := &x509.Certificate{
+		Raw: []byte("DUMMY CERTIFICATE DATA"),
+	}
+
+	// Test path traversal in prefix
+	err := ExportCertificates("../../../etc/passwd", "example.com", 443, []*x509.Certificate{cert})
+	if err == nil {
+		t.Error("expected error for path traversal in prefix")
+	}
+
+	// Test path traversal in host
+	tmpDir := t.TempDir()
+	prefix := filepath.Join(tmpDir, "export")
+	err = ExportCertificates(prefix, "../../../etc/evil", 443, []*x509.Certificate{cert})
+	if err != nil {
+		t.Fatalf("ExportCertificates with sanitized host should not fail: %v", err)
+	}
+	// Verify the file was created with sanitized filename (no directory traversal)
+	files, _ := filepath.Glob(filepath.Join(tmpDir, "export_*"))
+	if len(files) == 0 {
+		t.Error("expected certificate file to be created in temp dir")
+	}
+	// Verify no file was created outside tmpDir
+	if _, err := os.Stat("/etc/evil_443_0.crt"); err == nil {
+		t.Error("path traversal vulnerability: file created outside temp dir")
+	}
+}
+
+// TestExportCertificatesHostSanitization tests that host is sanitized in ExportCertificates.
+func TestExportCertificatesHostSanitization(t *testing.T) {
+	tmpDir := t.TempDir()
+	prefix := filepath.Join(tmpDir, "export")
+
+	cert := &x509.Certificate{
+		Raw: []byte("DUMMY CERTIFICATE DATA"),
+	}
+
+	// Test host with path separator
+	err := ExportCertificates(prefix, "evil/host", 443, []*x509.Certificate{cert})
+	if err != nil {
+		t.Fatalf("ExportCertificates should sanitize host: %v", err)
+	}
+
+	// Verify file was created with sanitized filename
+	files, _ := filepath.Glob(filepath.Join(tmpDir, "export_*"))
+	if len(files) == 0 {
+		t.Error("expected certificate file to be created")
+	}
+}
+
+// TestTLSOptions tests the options-based TLS function.
+func TestTLSOptions(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	u, _ := url.Parse(server.URL)
+	host, portStr, _ := net.SplitHostPort(u.Host)
+	port, _ := strconv.Atoi(portStr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rawConn, _, _, _, err := TCP(ctx, host, port, 2*time.Second, 1, "", "")
+	if err != nil {
+		t.Fatalf("TCP dial failed: %v", err)
+	}
+
+	/* #nosec G402 -- test server uses self-signed cert */
+	tlsConfig := &tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: true,
+	}
+
+	opts := TLSOptions{
+		Config:  tlsConfig,
+		Host:    host,
+		Port:    port,
+		RawConn: rawConn,
+		Timeout: 2 * time.Second,
+		Retries: 1,
+	}
+
+	tlsConn, result, err := TLS(ctx, opts)
+	if err != nil {
+		t.Fatalf("TLS failed: %v", err)
+	}
+	defer func() { _ = tlsConn.Close() }()
+
+	if !result.HandshakeSuccess {
+		t.Error("expected handshake success")
+	}
+	if result.Protocol == "" {
+		t.Error("expected non-empty protocol")
+	}
+	if result.Cipher == "" {
+		t.Error("expected non-empty cipher")
+	}
+}
+
+// TestOCSPRevocationNilCert tests CheckOCSPRevocation with nil certificate.
+func TestOCSPRevocationNilCert(t *testing.T) {
+	ctx := context.Background()
+	result := CheckOCSPRevocation(ctx, nil, nil)
+	if result.Status != "Error" {
+		t.Errorf("expected Error status for nil cert, got %s", result.Status)
+	}
+	if result.Error != "nil certificate" {
+		t.Errorf("expected 'nil certificate' error, got %s", result.Error)
+	}
+}
+
+// TestOCSPRevocationNoOCSPURL tests CheckOCSPRevocation with cert missing OCSP URL.
+func TestOCSPRevocationNoOCSPURL(t *testing.T) {
+	ctx := context.Background()
+	cert := &x509.Certificate{} // No OCSPServer URLs
+	result := CheckOCSPRevocation(ctx, cert, nil)
+	if result.Status != "No OCSP URL" {
+		t.Errorf("expected 'No OCSP URL' status, got %s", result.Status)
+	}
+}
+
+// TestOCSPRevocationNoIssuer tests CheckOCSPRevocation without issuer cert.
+func TestOCSPRevocationNoIssuer(t *testing.T) {
+	ctx := context.Background()
+	cert := &x509.Certificate{
+		OCSPServer: []string{"http://ocsp.example.com"},
+	}
+	result := CheckOCSPRevocation(ctx, cert, nil)
+	if result.Status != "Error" {
+		t.Errorf("expected Error status for missing issuer, got %s", result.Status)
+	}
+}
+
+// TestCountEmbeddedSCTsNil tests countEmbeddedSCTs with nil cert.
+func TestCountEmbeddedSCTsNil(t *testing.T) {
+	count := countEmbeddedSCTs(nil)
+	if count != 0 {
+		t.Errorf("expected 0 SCTs for nil cert, got %d", count)
+	}
+}
+
+// TestCountEmbeddedSCTsNoExtension tests countEmbeddedSCTs with cert without SCT extension.
+func TestCountEmbeddedSCTsNoExtension(t *testing.T) {
+	cert := &x509.Certificate{}
+	count := countEmbeddedSCTs(cert)
+	if count != 0 {
+		t.Errorf("expected 0 SCTs for cert without SCT extension, got %d", count)
+	}
+}
+
+// TestRevocationReasonString tests the revocation reason string conversion.
+func TestRevocationReasonString(t *testing.T) {
+	tests := []struct {
+		reason   int
+		expected string
+	}{
+		{0, "Unspecified"},
+		{1, "KeyCompromise"},
+		{2, "CACompromise"},
+		{4, "Superseded"},
+		{5, "CessationOfOperation"},
+		{99, "Unknown (99)"},
+	}
+
+	for _, tt := range tests {
+		result := revocationReasonString(tt.reason)
+		if result != tt.expected {
+			t.Errorf("revocationReasonString(%d) = %s, want %s", tt.reason, result, tt.expected)
+		}
+	}
+}
+
+// TestParseSCT tests SCT parsing.
+func TestParseSCT(t *testing.T) {
+	// Test nil/short data
+	if sct := parseSCT(nil, "test"); sct != nil {
+		t.Error("expected nil for nil data")
+	}
+	if sct := parseSCT(make([]byte, 10), "test"); sct != nil {
+		t.Error("expected nil for short data")
+	}
+
+	// Test valid SCT structure (minimum valid)
+	// Format: version(1) + log_id(32) + timestamp(8) + extensions_len(2) = 43 bytes minimum
+	validSCT := make([]byte, 43)
+	validSCT[0] = 0 // version 0 (v1)
+	// log_id bytes 1-32 (set first 8 for LogID extraction)
+	validSCT[1] = 0xAB
+	validSCT[2] = 0xCD
+	// timestamp at offset 33-40 (milliseconds since epoch)
+	// Set to 1704067200000 (Jan 1, 2024 00:00:00 UTC)
+	ts := uint64(1704067200000)
+	for i := 7; i >= 0; i-- {
+		validSCT[33+i] = byte(ts & 0xFF)
+		ts >>= 8
+	}
+
+	sct := parseSCT(validSCT, "test_source")
+	if sct == nil {
+		t.Fatal("expected non-nil SCT")
+	}
+	if sct.Version != 0 {
+		t.Errorf("expected version 0, got %d", sct.Version)
+	}
+	if sct.Source != "test_source" {
+		t.Errorf("expected source test_source, got %s", sct.Source)
+	}
+	if sct.LogID == "" {
+		t.Error("expected non-empty LogID")
+	}
+}
+
+// TestParseEmbeddedSCTs tests embedded SCT extraction.
+func TestParseEmbeddedSCTs(t *testing.T) {
+	// Test nil cert
+	if scts := parseEmbeddedSCTs(nil); len(scts) != 0 {
+		t.Error("expected empty result for nil cert")
+	}
+
+	// Test cert without SCT extension
+	cert := &x509.Certificate{}
+	if scts := parseEmbeddedSCTs(cert); len(scts) != 0 {
+		t.Error("expected empty result for cert without SCT extension")
+	}
+}
+
+// TestFetchIssuerFromAIA tests AIA issuer fetch error handling.
+func TestFetchIssuerFromAIA(t *testing.T) {
+	ctx := context.Background()
+
+	// Test nil cert
+	_, err := FetchIssuerFromAIA(ctx, nil)
+	if err == nil {
+		t.Error("expected error for nil cert")
+	}
+
+	// Test cert without AIA
+	cert := &x509.Certificate{}
+	_, err = FetchIssuerFromAIA(ctx, cert)
+	if err == nil {
+		t.Error("expected error for cert without AIA")
+	}
+
+	// Test with unreachable URL
+	certWithAIA := &x509.Certificate{
+		IssuingCertificateURL: []string{"http://localhost:59999/issuer.crt"},
+	}
+	_, err = FetchIssuerFromAIA(ctx, certWithAIA)
+	if err == nil {
+		t.Error("expected error for unreachable AIA URL")
 	}
 }

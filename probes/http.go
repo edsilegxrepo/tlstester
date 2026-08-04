@@ -41,7 +41,7 @@ func HTTP(ctx context.Context, tlsConfig *tls.Config, host string, port int, pat
 	targetURL := fmt.Sprintf("https://%s:%d%s", host, port, path)
 	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
 	if err != nil {
-		result.Error = fmt.Sprintf("Failed to create HTTP probe request: %v", err)
+		result.Error = fmt.Sprintf("failed to create HTTP probe request: %v", err)
 		return result
 	}
 
@@ -102,7 +102,7 @@ func HTTP(ctx context.Context, tlsConfig *tls.Config, host string, port int, pat
 			}
 		}
 		if !matched {
-			result.Error = fmt.Sprintf("HTTP Status Code assertion failed: got %d, expected [%s]", resp.StatusCode, assertStatus)
+			result.Error = fmt.Sprintf("HTTP status code assertion failed: got %d, expected [%s]", resp.StatusCode, assertStatus)
 		}
 	}
 

@@ -2,26 +2,39 @@
 //
 // OBJECTIVES:
 // Provide thread-safe Goroutine worker pool execution (`RunDiagnostics`) to process diagnostic targets
-// concurrently with context deadlines, clean channel synchronization, and zero state mutations.
+// concurrently with context deadlines, clean channel synchronization, result order preservation, and
+// zero state mutations.
 //
 // CORE COMPONENTS & DATA FLOW:
 //   - CreateTLSConfig (runner.go): Initializes a tls.Config with requested TLS versions, cipher suites,
 //     SNI options, custom truststores, and mTLS client certificates.
-//   - RunDiagnostics (runner.go): Orchestrates parallel task dispatch across worker Goroutines.
+//   - RunDiagnostics (runner.go): Orchestrates parallel task dispatch across worker Goroutines with
+//     indexed channels to preserve input order in output results.
 //   - ExecuteTarget (runner.go): Executes sequential diagnostic steps (TCP socket, TLS handshake,
-//     HTTP probe, OCSP check, protocol sweep) for a single target tuple.
+//     HTTP probe, OCSP check, protocol sweep) for a single target tuple, extracting leaf certificate
+//     metadata (subject, issuer, SANs, expiration, key type/size) for library consumers.
+//   - getKeyInfo (runner.go): Extracts public key type (RSA, ECDSA, Ed25519) and bit size from certificates.
+//
+// CONCURRENCY MODEL:
+//   - Worker pool size bounded by min(cfg.Workers, len(targets)).
+//   - Channel buffer sizes bounded by maxChannelBuffer (10000) to prevent OOM on large target lists.
+//   - Indexed result collection preserves input target order regardless of completion sequence.
 package tlstester
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"criticalsys.net/tlstester/certs"
-	"criticalsys.net/tlstester/probes"
+	"github.com/edsilegxrepo/tlstester/certs"
+	"github.com/edsilegxrepo/tlstester/probes"
 )
 
 // CreateTLSConfig initializes a tls.Config based on Config parameters and target properties.
@@ -100,20 +113,54 @@ func CreateTLSConfig(cfg *Config, target Target) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
+// indexedTarget pairs a target with its original index for order preservation.
+type indexedTarget struct {
+	index  int
+	target Target
+}
+
+// indexedResult pairs a result with its original index for order preservation.
+type indexedResult struct {
+	index  int
+	result TargetResult
+}
+
+// maxChannelBuffer bounds channel buffer sizes to prevent OOM on large target lists.
+// Targets exceeding this limit queue in the producer goroutine rather than buffering.
+const maxChannelBuffer = 10000
+
 // RunDiagnostics orchestrates parallel target probing using a context-aware Goroutine worker pool.
-// Returns a consolidated slice of TargetResult objects upon worker pool completion.
+// Returns a consolidated slice of TargetResult objects in the same order as input targets.
 func RunDiagnostics(ctx context.Context, cfg *Config, targets []Target) []TargetResult {
 	if cfg == nil {
 		cfg = NewConfig()
 	}
 
-	targetChan := make(chan Target, len(targets))
-	resultChan := make(chan TargetResult, len(targets))
-
-	for _, t := range targets {
-		targetChan <- t
+	if len(targets) == 0 {
+		return nil
 	}
-	close(targetChan)
+
+	// Bound channel buffer size to prevent OOM
+	bufSize := len(targets)
+	if bufSize > maxChannelBuffer {
+		bufSize = maxChannelBuffer
+	}
+
+	targetChan := make(chan indexedTarget, bufSize)
+	resultChan := make(chan indexedResult, bufSize)
+
+	// Feed targets with their indices
+	go func() {
+		for i, t := range targets {
+			select {
+			case <-ctx.Done():
+				close(targetChan)
+				return
+			case targetChan <- indexedTarget{index: i, target: t}:
+			}
+		}
+		close(targetChan)
+	}()
 
 	numWorkers := cfg.Workers
 	if numWorkers > len(targets) {
@@ -129,24 +176,39 @@ func RunDiagnostics(ctx context.Context, cfg *Config, targets []Target) []Target
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for target := range targetChan {
+			for it := range targetChan {
 				select {
 				case <-ctx.Done():
 					return
 				default:
-					res := ExecuteTarget(ctx, cfg, target)
-					resultChan <- res
+					res := ExecuteTarget(ctx, cfg, it.target)
+					select {
+					case <-ctx.Done():
+						return
+					case resultChan <- indexedResult{index: it.index, result: res}:
+					}
 				}
 			}
 		}()
 	}
 
-	wg.Wait()
-	close(resultChan)
+	// Close result channel after all workers done
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
 
-	var results []TargetResult
-	for res := range resultChan {
-		results = append(results, res)
+	// Collect results and sort by original index
+	results := make([]TargetResult, len(targets))
+	received := 0
+	for ir := range resultChan {
+		results[ir.index] = ir.result
+		received++
+	}
+
+	// If cancelled early, trim to received results
+	if received < len(targets) {
+		results = results[:received]
 	}
 
 	return results
@@ -185,11 +247,20 @@ func ExecuteTarget(ctx context.Context, cfg *Config, target Target) TargetResult
 	tlsConfig, err := CreateTLSConfig(cfg, target)
 	if err != nil {
 		_ = rawConn.Close()
-		result.Error = fmt.Sprintf("Failed to create TLS config: %v", err)
+		result.Error = fmt.Sprintf("failed to create TLS config: %v", err)
 		return result
 	}
 
-	tlsConn, tlsRes, handshakeErr := probes.TLS(ctx, tlsConfig, target.Host, target.Port, rawConn, cfg.Timeout, cfg.Retries, cfg.Proxy, cfg.ProxyType)
+	tlsConn, tlsRes, handshakeErr := probes.TLS(ctx, probes.TLSOptions{
+		Config:    tlsConfig,
+		Host:      target.Host,
+		Port:      target.Port,
+		RawConn:   rawConn,
+		Timeout:   cfg.Timeout,
+		Retries:   cfg.Retries,
+		ProxyAddr: cfg.Proxy,
+		ProxyType: cfg.ProxyType,
+	})
 	result.TLSHandshakeSuccess = tlsRes.HandshakeSuccess
 	result.TLSHandshakeLatency = tlsRes.HandshakeLatency
 	result.TLSProtocol = tlsRes.Protocol
@@ -197,6 +268,9 @@ func ExecuteTarget(ctx context.Context, cfg *Config, target Target) TargetResult
 	result.TLSAlpn = tlsRes.Alpn
 	result.NegotiatedGroup = tlsRes.NegotiatedGroup
 	result.OCSPStapled = tlsRes.OCSPStapled
+	result.SCTsPresent = tlsRes.SCTsPresent
+	result.SCTCount = tlsRes.SCTCount
+	result.SCTs = tlsRes.SCTs
 	result.CapturedChain = tlsRes.PeerCertificates
 	result.CertChainTrusted = tlsRes.CertTrusted
 	result.CertChainTrustError = tlsRes.TrustError
@@ -204,11 +278,30 @@ func ExecuteTarget(ctx context.Context, cfg *Config, target Target) TargetResult
 	if len(tlsRes.PeerCertificates) > 0 {
 		cert := tlsRes.PeerCertificates[0]
 		daysRemaining := certs.DaysUntilExpiration(cert)
+
+		// Populate leaf certificate info for library consumers
+		result.LeafSubject = cert.Subject.String()
+		result.LeafIssuer = cert.Issuer.String()
+		result.LeafSANs = cert.DNSNames
+		result.LeafNotBefore = cert.NotBefore
+		result.LeafNotAfter = cert.NotAfter
+		result.LeafIsExpired = time.Now().After(cert.NotAfter)
+		result.LeafDaysRemaining = daysRemaining
+		result.LeafSerial = fmt.Sprintf("%X", cert.SerialNumber)
+		result.LeafSignatureAlgorithm = cert.SignatureAlgorithm.String()
+		result.LeafKeyType, result.LeafKeySize = getKeyInfo(cert)
+
 		if cfg.WarnDays > 0 && daysRemaining <= cfg.WarnDays {
 			result.CertExpirationWarning = fmt.Sprintf("Certificate expires in %d days (%s)", daysRemaining, cert.NotAfter.Format(time.RFC3339))
 		}
 		if cfg.CheckOCSP {
 			result.ActiveOCSPStatus = probes.CheckActiveOCSP(ctx, cert)
+			// Also perform proper OCSP revocation check if we have the issuer cert
+			if len(tlsRes.PeerCertificates) > 1 {
+				issuer := tlsRes.PeerCertificates[1]
+				ocspResult := probes.CheckOCSPRevocation(ctx, cert, issuer)
+				result.OCSPRevocation = &ocspResult
+			}
 		}
 		if cfg.ExportCert != "" {
 			_ = probes.ExportCertificates(cfg.ExportCert, target.Host, target.Port, tlsRes.PeerCertificates)
@@ -251,4 +344,22 @@ func ExecuteTarget(ctx context.Context, cfg *Config, target Target) TargetResult
 	}
 
 	return result
+}
+
+// getKeyInfo extracts the public key type and size from a certificate.
+func getKeyInfo(cert *x509.Certificate) (keyType string, keySize int) {
+	if cert == nil || cert.PublicKey == nil {
+		return "Unknown", 0
+	}
+
+	switch key := cert.PublicKey.(type) {
+	case *rsa.PublicKey:
+		return "RSA", key.N.BitLen()
+	case *ecdsa.PublicKey:
+		return "ECDSA", key.Curve.Params().BitSize
+	case ed25519.PublicKey:
+		return "Ed25519", 256
+	default:
+		return "Unknown", 0
+	}
 }

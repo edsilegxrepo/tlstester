@@ -122,3 +122,55 @@ func TestParseTargetsEmpty(t *testing.T) {
 		t.Error("expected error for non existent target file")
 	}
 }
+
+// TestParseTargetsWithWarnings tests file parsing with invalid lines generating warnings.
+func TestParseTargetsWithWarnings(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetFile := filepath.Join(tmpDir, "targets_with_errors.txt")
+
+	// File with one valid and one invalid target
+	content := "example.com:443\n:invalid_no_host\ngoogle.com:443\n"
+	err := os.WriteFile(targetFile, []byte(content), 0o600)
+	if err != nil {
+		t.Fatalf("failed to write temp target file: %v", err)
+	}
+
+	cfg := NewConfig()
+	cfg.File = targetFile
+
+	result, err := ParseTargetsWithWarnings(cfg)
+	if err != nil {
+		t.Fatalf("ParseTargetsWithWarnings failed: %v", err)
+	}
+
+	// Should have 2 valid targets
+	if len(result.Targets) != 2 {
+		t.Errorf("expected 2 valid targets, got %d", len(result.Targets))
+	}
+
+	// Should have 1 warning for the invalid line
+	if len(result.Warnings) != 1 {
+		t.Errorf("expected 1 warning, got %d", len(result.Warnings))
+	}
+}
+
+// TestParseTargetsStrictParsing tests that StrictParsing fails on first invalid target.
+func TestParseTargetsStrictParsing(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetFile := filepath.Join(tmpDir, "targets_strict.txt")
+
+	content := "example.com:443\n:invalid_no_host\ngoogle.com:443\n"
+	err := os.WriteFile(targetFile, []byte(content), 0o600)
+	if err != nil {
+		t.Fatalf("failed to write temp target file: %v", err)
+	}
+
+	cfg := NewConfig()
+	cfg.File = targetFile
+	cfg.StrictParsing = true
+
+	_, err = ParseTargetsWithWarnings(cfg)
+	if err == nil {
+		t.Error("expected error with StrictParsing enabled")
+	}
+}

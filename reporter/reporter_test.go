@@ -2,9 +2,12 @@
 //
 // TEST STRATEGY EXPLANATION:
 // Verifies output formatting correctness across reporting formats:
-// 1. Dashboard rendering: Tests ANSI color code formatting, certificate chain breakdown, expiration warnings, and failed target error logs.
-// 2. JSON serialization: Verifies structure indentation, field presence, and array formatting.
-// 3. CSV export: Validates record header generation, latency integer conversions, and CSV field comma separation.
+//  1. TestDashboardRendering: Tests ANSI color code formatting, certificate chain breakdown, expiration warnings,
+//     and failed target error logs.
+//  2. TestJSONExport: Verifies JSON structure indentation, field presence, and array formatting.
+//  3. TestCSVExport: Validates record header generation, latency integer conversions, and CSV field comma separation.
+//  4. TestCSVExportWriteError: Validates proper error propagation when underlying io.Writer fails, ensuring
+//     CSV write errors are returned rather than silently discarded.
 package reporter
 
 import (
@@ -16,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"criticalsys.net/tlstester"
-	"criticalsys.net/tlstester/probes"
+	"github.com/edsilegxrepo/tlstester"
+	"github.com/edsilegxrepo/tlstester/probes"
 )
 
 // TestDashboardRendering verifies ANSI table rendering for connected and failed diagnostic targets.
@@ -137,3 +140,38 @@ func TestCSVExport(t *testing.T) {
 		t.Errorf("CSV output missing expected host: %s", buf.String())
 	}
 }
+
+// TestCSVExportWriteError tests CSV export error handling with a failing writer.
+func TestCSVExportWriteError(t *testing.T) {
+	results := []tlstester.TargetResult{
+		{
+			Target: tlstester.Target{Host: "example.com", Port: 443},
+		},
+	}
+
+	fw := &failingWriter{failAfter: 0}
+	err := CSV(fw, results)
+	if err == nil {
+		t.Error("expected error for failing writer")
+	}
+}
+
+// failingWriter is a mock writer that fails after N writes.
+type failingWriter struct {
+	failAfter int
+	writes    int
+}
+
+func (fw *failingWriter) Write(p []byte) (int, error) {
+	if fw.writes >= fw.failAfter {
+		return 0, errMockWrite
+	}
+	fw.writes++
+	return len(p), nil
+}
+
+var errMockWrite = &mockWriteError{}
+
+type mockWriteError struct{}
+
+func (e *mockWriteError) Error() string { return "mock write error" }

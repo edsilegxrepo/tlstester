@@ -9,7 +9,13 @@
 package tlstester
 
 import (
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
 	"testing"
 )
 
@@ -96,5 +102,45 @@ func TestCreateTLSConfigSNI(t *testing.T) {
 	tc3, _ := CreateTLSConfig(cfg3, target)
 	if tc3.ServerName != "" {
 		t.Errorf("expected empty SNI for NoSNI, got '%s'", tc3.ServerName)
+	}
+}
+
+// TestGetKeyInfo tests key type and size extraction from certificates.
+func TestGetKeyInfo(t *testing.T) {
+	// Test nil cert
+	keyType, keySize := getKeyInfo(nil)
+	if keyType != "Unknown" || keySize != 0 {
+		t.Errorf("expected Unknown/0 for nil cert, got %s/%d", keyType, keySize)
+	}
+
+	// Test RSA key
+	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	rsaCert := &x509.Certificate{PublicKey: &rsaKey.PublicKey}
+	keyType, keySize = getKeyInfo(rsaCert)
+	if keyType != "RSA" || keySize != 2048 {
+		t.Errorf("expected RSA/2048, got %s/%d", keyType, keySize)
+	}
+
+	// Test ECDSA P-256
+	ecKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ecCert := &x509.Certificate{PublicKey: &ecKey.PublicKey}
+	keyType, keySize = getKeyInfo(ecCert)
+	if keyType != "ECDSA" || keySize != 256 {
+		t.Errorf("expected ECDSA/256, got %s/%d", keyType, keySize)
+	}
+
+	// Test Ed25519
+	_, edKey, _ := ed25519.GenerateKey(rand.Reader)
+	edCert := &x509.Certificate{PublicKey: edKey.Public()}
+	keyType, keySize = getKeyInfo(edCert)
+	if keyType != "Ed25519" || keySize != 256 {
+		t.Errorf("expected Ed25519/256, got %s/%d", keyType, keySize)
+	}
+
+	// Test unknown key type
+	unknownCert := &x509.Certificate{PublicKey: "not a valid key"}
+	keyType, keySize = getKeyInfo(unknownCert)
+	if keyType != "Unknown" || keySize != 0 {
+		t.Errorf("expected Unknown/0 for unknown key, got %s/%d", keyType, keySize)
 	}
 }
