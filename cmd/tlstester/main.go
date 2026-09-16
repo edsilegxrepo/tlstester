@@ -37,12 +37,12 @@ var version = "1.0.0"
 
 // Exit codes for diagnostic automation and pipeline scripting
 const (
-	ExitSuccess        = 0  // All targets passed
-	ExitTargetFailure  = 1  // One or more targets failed (TCP, TLS, or assertion)
-	ExitUsageError     = 2  // Invalid CLI usage or target parsing error
-	ExitIOError        = 3  // File I/O error (log file, CSV, certificate export)
-	ExitConfigError    = 4  // Invalid configuration (TLS version, cipher suite, truststore)
-	ExitPartialSuccess = 5  // Some targets passed, some failed
+	ExitSuccess        = 0   // All targets passed
+	ExitTargetFailure  = 1   // One or more targets failed (TCP, TLS, or assertion)
+	ExitUsageError     = 2   // Invalid CLI usage or target parsing error
+	ExitIOError        = 3   // File I/O error (log file, CSV, certificate export)
+	ExitConfigError    = 4   // Invalid configuration (TLS version, cipher suite, truststore)
+	ExitPartialSuccess = 5   // Some targets passed, some failed
 	ExitCancelled      = 130 // Interrupted by SIGINT (standard Unix convention: 128 + signal number)
 )
 

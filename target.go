@@ -35,27 +35,27 @@ type Target struct {
 
 // TargetResult aggregates complete diagnostic probe findings for a Target instance.
 type TargetResult struct {
-	Target                     Target                      `json:"target"`
-	ResolvedIPs                []string                    `json:"resolved_ips"`
-	DNSLatency                 time.Duration               `json:"dns_latency_ns"`
-	TCPLatency                 time.Duration               `json:"tcp_latency_ns"`
-	TCPConnected               bool                        `json:"tcp_connected"`
-	TLSHandshakeSuccess        bool                        `json:"tls_handshake_success"`
-	TLSHandshakeLatency        time.Duration               `json:"tls_handshake_latency_ns"`
-	TLSProtocol                string                      `json:"tls_protocol,omitempty"`
-	TLSCipher                  string                      `json:"tls_cipher,omitempty"`
-	TLSAlpn                    string                      `json:"tls_alpn,omitempty"`
-	NegotiatedGroup            string                      `json:"negotiated_group,omitempty"`
-	OCSPStapled                bool                        `json:"ocsp_stapled"`
-	SCTsPresent                bool                        `json:"scts_present"`
-	SCTCount                   int                         `json:"sct_count"`
-	SCTs                       []probes.SCTInfo            `json:"scts,omitempty"`
-	CertChainTrusted           bool                        `json:"cert_chain_trusted"`
-	CertChainTrustError        string                      `json:"cert_chain_trust_error,omitempty"`
-	CertExpirationWarning      string                      `json:"cert_expiration_warning,omitempty"`
-	ActiveOCSPStatus           string                      `json:"active_ocsp_status,omitempty"`
-	OCSPRevocation             *probes.OCSPResult          `json:"ocsp_revocation,omitempty"`
-	CapturedChain              []*x509.Certificate         `json:"-"`
+	Target                Target              `json:"target"`
+	ResolvedIPs           []string            `json:"resolved_ips"`
+	DNSLatency            time.Duration       `json:"dns_latency_ns"`
+	TCPLatency            time.Duration       `json:"tcp_latency_ns"`
+	TCPConnected          bool                `json:"tcp_connected"`
+	TLSHandshakeSuccess   bool                `json:"tls_handshake_success"`
+	TLSHandshakeLatency   time.Duration       `json:"tls_handshake_latency_ns"`
+	TLSProtocol           string              `json:"tls_protocol,omitempty"`
+	TLSCipher             string              `json:"tls_cipher,omitempty"`
+	TLSAlpn               string              `json:"tls_alpn,omitempty"`
+	NegotiatedGroup       string              `json:"negotiated_group,omitempty"`
+	OCSPStapled           bool                `json:"ocsp_stapled"`
+	SCTsPresent           bool                `json:"scts_present"`
+	SCTCount              int                 `json:"sct_count"`
+	SCTs                  []probes.SCTInfo    `json:"scts,omitempty"`
+	CertChainTrusted      bool                `json:"cert_chain_trusted"`
+	CertChainTrustError   string              `json:"cert_chain_trust_error,omitempty"`
+	CertExpirationWarning string              `json:"cert_expiration_warning,omitempty"`
+	ActiveOCSPStatus      string              `json:"active_ocsp_status,omitempty"`
+	OCSPRevocation        *probes.OCSPResult  `json:"ocsp_revocation,omitempty"`
+	CapturedChain         []*x509.Certificate `json:"-"`
 	// Leaf certificate info (extracted from CapturedChain[0] for convenience)
 	LeafSubject                string                      `json:"leaf_subject,omitempty"`
 	LeafIssuer                 string                      `json:"leaf_issuer,omitempty"`

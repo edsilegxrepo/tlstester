@@ -255,7 +255,7 @@ func countEmbeddedSCTs(cert *x509.Certificate) int {
 
 // ExportCertificates saves peer certificate chains to disk as individual PEM-encoded files with prefix.
 // Prefix can be a directory path (e.g., "/tmp/certs") and is sanitized to prevent path traversal.
-func ExportCertificates(prefix string, host string, port int, chain []*x509.Certificate) error {
+func ExportCertificates(prefix, host string, port int, chain []*x509.Certificate) error {
 	// Sanitize prefix to prevent path traversal
 	cleanPrefix := filepath.Clean(prefix)
 	absPrefix, err := filepath.Abs(cleanPrefix)

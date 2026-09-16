@@ -14,6 +14,7 @@
 //     PEM certificate file export with path traversal prevention and hostname sanitization security tests.
 //  8. TestTLSOptions: Options-based TLS function parameter bundling.
 //  9. TestOCSPRevocationNilCert & TestOCSPRevocationNoOCSPURL & TestOCSPRevocationNoIssuer: OCSP error handling.
+//
 // 10. TestCountEmbeddedSCTsNil & TestCountEmbeddedSCTsNoExtension: SCT counting edge cases.
 // 11. TestRevocationReasonString: OCSP revocation reason code to string mapping.
 // 12. TestParseSCT & TestParseEmbeddedSCTs: Certificate Transparency SCT parsing from raw bytes.

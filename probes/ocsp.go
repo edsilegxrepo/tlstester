@@ -52,15 +52,15 @@ func newSecureHTTPClient(timeout time.Duration) *http.Client {
 
 // OCSPResult holds the structured result of an OCSP revocation check.
 type OCSPResult struct {
-	Checked       bool      // Whether OCSP check was performed
-	URL           string    // OCSP responder URL used
-	Status        string    // "Good", "Revoked", "Unknown", or error description
+	Checked        bool      // Whether OCSP check was performed
+	URL            string    // OCSP responder URL used
+	Status         string    // "Good", "Revoked", "Unknown", or error description
 	RevocationTime time.Time // If revoked, when it was revoked
 	RevokedReason  string    // If revoked, the reason code
-	ThisUpdate    time.Time // OCSP response validity start
-	NextUpdate    time.Time // OCSP response validity end
-	ProducedAt    time.Time // When the OCSP response was generated
-	Error         string    // Error message if check failed
+	ThisUpdate     time.Time // OCSP response validity start
+	NextUpdate     time.Time // OCSP response validity end
+	ProducedAt     time.Time // When the OCSP response was generated
+	Error          string    // Error message if check failed
 }
 
 // FetchIssuerFromAIA fetches the issuer certificate from the certificate's AIA extension.
