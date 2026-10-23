@@ -1,0 +1,18 @@
+{
+  "name": "tlstester",
+  "version": "1.1.0",
+  "release": "1",
+  "channel": "xg",
+  "entrypoint": "./cmd/tlstester",
+  "version_pkg": "main.version",
+  "build_pkg": "",
+  "summary": "TLS protocol diagnostics and security scanner",
+  "description": "Production-grade TLS connection tester, cipher suite analyzer, and certificate chain inspector.",
+  "maintainer": "Mis Center <support@criticalsys.net>",
+  "license": "MIT",
+  "url": "https://criticalsys.net",
+  "section": "utils",
+  "priority": "optional",
+  "install_path": "/usr/bin",
+  "cgo": false
+}
